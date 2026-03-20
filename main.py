@@ -30,7 +30,14 @@ pool = None
 checkpointer = None
 
 if DB_URL:
-    pool = ConnectionPool(conninfo=DB_URL, max_size=20, kwargs={"autocommit": True})
+    pool = ConnectionPool(
+        conninfo=DB_URL, 
+        max_size=20, 
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": None  # 👈 就是这行魔法代码，禁用预编译，完美解决 Supabase 冲突
+        }
+    )
     checkpointer = PostgresSaver(pool)
     checkpointer.setup()
 
