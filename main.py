@@ -61,8 +61,8 @@ async def lifespan(app: FastAPI):
     print("🚀 Agent 启动中...")
     if pool:
         try:
-            # 自动在 Supabase 中创建 chat_history 表（如果不存在）
-            PostgresChatMessageHistory.create_tables(sync_connection=pool, table_name="chat_history")
+            # 去掉参数名，直接按位置传参
+            PostgresChatMessageHistory.create_tables(pool, "chat_history")
             print("✅ Supabase chat_history 表就绪！")
         except Exception as e:
             print(f"⚠️ 检查/创建 chat_history 表时出现提示 (通常是因为表已存在): {e}")
