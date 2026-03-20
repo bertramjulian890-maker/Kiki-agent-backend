@@ -15,3 +15,8 @@ python-dotenv>=1.0.0
 
 # === CORS Support (FastAPI 已包含，但如需额外配置) ===
 python-multipart>=0.0.12
+
+# === 数据库与持久化 ===
+supabase
+psycopg[binary,pool]       # LangGraph 官方推荐的 Postgres 驱动
+langchain-postgres         # 方便集成 Postgres 聊天记录
