@@ -108,7 +108,7 @@ async def chat(request: ChatRequest):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-@app.post("/api/v1/chat/stream")
+@app.post("/stream")
 async def chat_stream(request: ChatRequest):
     """流式对话接口（token 级输出）"""
     try:
