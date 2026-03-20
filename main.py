@@ -150,8 +150,8 @@ async def chat_stream(request: ChatRequest):
             
             if pool:
                 history = PostgresChatMessageHistory(
-                    table_name="chat_history",
-                    session_id=session_id,
+                    "chat_history",
+                    session_id,
                     sync_connection=pool
                 )
                 past_messages = history.messages 
