@@ -151,17 +151,19 @@ async def chat_stream(request: ChatRequest):
             
             full_response = ""
             past_messages = []
-            history = None
             
+            # --- 1. 读取历史记录（秒借秒还） ---
             if pool:
-                # 数据库操作使用标准的 UUID
-                history = PostgresChatMessageHistory(
-                    "chat_history",
-                    db_session_id,
-                    sync_connection=pool
-                )
-                past_messages = history.messages 
+                # 从连接池拿出一个连接 (conn) 给它用
+                with pool.connection() as conn:
+                    history = PostgresChatMessageHistory(
+                        "chat_history",
+                        db_session_id,
+                        sync_connection=conn
+                    )
+                    past_messages = history.messages 
             
+            # --- 2. 拼接消息并开始流式请求 ---
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + past_messages + [user_message]
             
             async for chunk in llm_service.model.astream(messages):
@@ -170,9 +172,16 @@ async def chat_stream(request: ChatRequest):
                 yield f"data: {json.dumps({'type': 'chunk', 'content': content})}\n\n"
                 await asyncio.sleep(0.01)
             
-            if history:
-                history.add_user_message(request.message)
-                history.add_ai_message(full_response)
+            # --- 3. 存入新记忆（再次借用连接） ---
+            if pool:
+                with pool.connection() as conn:
+                    history = PostgresChatMessageHistory(
+                        "chat_history",
+                        db_session_id,
+                        sync_connection=conn
+                    )
+                    history.add_user_message(request.message)
+                    history.add_ai_message(full_response)
             
             yield f"data: {json.dumps({'type': 'end', 'fullResponse': full_response})}\n\n"
             
