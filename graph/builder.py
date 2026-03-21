@@ -3,7 +3,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from graph.state import AgentState
 from graph.nodes import NODES, should_continue
 
-def create_agent_graph():
+def create_agent_graph(checkpointer=None):
     """
     创建并编译 Agent 图
     
@@ -35,11 +35,12 @@ def create_agent_graph():
     )
     
     # 添加内存检查点（用于短期对话记忆）
-    checkpointer = MemorySaver()
-    
-    # 编译图
+    if checkpointer is None:
+            from langgraph.checkpoint.memory import MemorySaver
+            checkpointer = MemorySaver()
+        
+        # 3. 编译时必须传入这个 checkpointer
     app = workflow.compile(checkpointer=checkpointer)
-    
     return app
 
 # 全局图实例
