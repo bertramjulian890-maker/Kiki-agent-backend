@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-from psycopg_pool import ConnectionPool
-from langchain_postgres import PostgresChatMessageHistory
-from langgraph.checkpoint.postgres import PostgresSaver
+# 1. 👈 替换为全异步的驱动
+from psycopg_pool import AsyncConnectionPool 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from graph.state import AgentState
 from graph.nodes import call_model, should_continue
@@ -25,33 +25,11 @@ from graph.builder import create_agent_graph
 load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
+
+# 先声明为全局变量，等待 FastAPI 启动后再注入灵魂
 pool = None
 checkpointer = None
 agent_graph = None 
-
-# 2. 数据库逻辑
-if DB_URL:
-    try:
-        pool = ConnectionPool(
-            conninfo=DB_URL, 
-            max_size=20, 
-            kwargs={
-                "autocommit": True,  # 👈 必须为 True
-                "prepare_threshold": None
-            }
-        )
-        checkpointer = PostgresSaver(pool)
-        checkpointer.setup()
-        # 3. 关键：将带存储的 checkpointer 注入
-        agent_graph = create_agent_graph(checkpointer)
-        print("✅ 成功启动：Supabase 持久化模式")
-    except Exception as e:
-        print(f"❌ 数据库连接失败，切换到内存模式: {e}")
-        agent_graph = create_agent_graph(None)
-else:
-    # 4. 兜底
-    agent_graph = create_agent_graph(None)
-    print("⚠️ 运行模式：仅内存存储")
 
 SYSTEM_PROMPT = """你是一个温暖、贴心的AI助手。你的回答应该：
 - 简洁但友善
@@ -71,29 +49,50 @@ class Message(BaseModel):
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
-# 💡 新增：将前端的非标准 ID 转换为标准 UUID 的魔法函数
 def ensure_uuid(session_id: str) -> str:
     try:
         return str(uuid.UUID(session_id))
     except ValueError:
-        # 使用 uuid5 将任何字符串稳定地映射为一个标准 UUID
         return str(uuid.uuid5(uuid.NAMESPACE_DNS, session_id))
 
+# 2. 👈 核心重构：在生命周期内初始化异步数据库
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global pool, checkpointer, agent_graph
     print("🚀 Agent 启动中...")
-    if pool:
+    
+    if DB_URL:
         try:
-            with pool.connection() as conn:
-                PostgresChatMessageHistory.create_tables(conn, "chat_history")
-            print("✅ Supabase chat_history 表就绪！")
-        except Exception as e:
-            print(f"⚠️ 检查/创建 chat_history 表时出现提示: {e}")
+            # 使用异步连接池
+            pool = AsyncConnectionPool(
+                conninfo=DB_URL, 
+                max_size=20, 
+                kwargs={
+                    "autocommit": True,  # 依然必须为 True
+                    "prepare_threshold": None
+                }
+            )
+            # 使用异步 Checkpointer
+            checkpointer = AsyncPostgresSaver(pool)
             
+            # 异步建表 (如果之前建过会自动跳过)
+            await checkpointer.asetup()
+            
+            # 把异步 Checkpointer 塞进 Graph
+            agent_graph = create_agent_graph(checkpointer)
+            print("✅ 成功启动：Supabase 全异步持久化模式！")
+        except Exception as e:
+            print(f"❌ 数据库连接失败，切换到内存模式: {e}")
+            agent_graph = create_agent_graph(None)
+    else:
+        agent_graph = create_agent_graph(None)
+        print("⚠️ 运行模式：仅内存存储")
+        
     yield
+    
     print("👋 Agent 已关闭")
     if pool:
-        pool.close()
+        await pool.close()
 
 app = FastAPI(
     title="Personal Agent API",
@@ -155,14 +154,11 @@ async def chat_stream(request: ChatRequest):
         if not request.message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
         
-        # 1. 拿到前端的原始 ID
         original_session_id = request.conversation_id or "default"
-        # 2. 转换成数据库/Checkpointer 接受的标准 UUID
         db_session_id = ensure_uuid(original_session_id)
         
         user_message = HumanMessage(content=request.message)
         
-        # 3. 构造 LangGraph 的配置 (通过 thread_id 自动关联历史记忆)
         config = {
             "configurable": {
                 "thread_id": db_session_id
@@ -170,14 +166,11 @@ async def chat_stream(request: ChatRequest):
         }
 
         async def generate():
-            # 告诉前端流式传输开始
             yield f"data: {json.dumps({'type': 'start', 'conversation_id': original_session_id}, ensure_ascii=False)}\n\n"
             
             full_response = ""
             
             try:
-                # --- 核心重构：调用 agent_graph 替代 direct LLM 调用 ---
-                # 使用推荐的 astream_events (v2 版本) 监听图中发生的所有事件
                 async for event in agent_graph.astream_events(
                     {"messages": [user_message]},
                     config=config,
@@ -186,38 +179,31 @@ async def chat_stream(request: ChatRequest):
                     kind = event["event"]
                     name = event["name"]
                     
-                    # (1) 捕获节点流转：进入 call_model 节点
                     if kind == "on_chain_start" and name == "call_model":
                         yield f"data: {json.dumps({'type': 'event', 'status': 'thinking', 'message': 'Kiki 正在思考...'}, ensure_ascii=False)}\n\n"
                     
-                    # (2) 捕获 token 生成：大模型文字流式输出
                     elif kind == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
-                        # 确保有实际内容再拼接和下发
                         if chunk.content:
                             full_response += chunk.content
                             yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.content}, ensure_ascii=False)}\n\n"
                             
-                    # (3) 预留 Tool 壳子：工具调用开始
                     elif kind == "on_tool_start":
                         tool_input = event["data"].get("input", "")
                         yield f"data: {json.dumps({'type': 'tool', 'tool_name': name, 'tool_input': tool_input, 'status': 'running'}, ensure_ascii=False)}\n\n"
                         
-                    # (4) 预留 Tool 壳子：工具调用结束
                     elif kind == "on_tool_end":
                         yield f"data: {json.dumps({'type': 'tool', 'tool_name': name, 'status': 'completed'}, ensure_ascii=False)}\n\n"
 
-                    pass
+                # 3. 👈 注意这里：异步环境里放心用 aget_state 获取快照
                 print(f"--- 尝试检查 thread_id: {db_session_id} 的状态 ---")
-                snapshot = await agent_graph.aget_state(config) # 注意：异步环境下建议使用 aget_state
-                # 2. 打印时直接访问 values
+                snapshot = await agent_graph.aget_state(config) 
                 if snapshot and snapshot.values:
-                    print(f"--- 内存中读取到的消息数: {len(snapshot.values.get('messages', []))} ---")
+                    print(f"--- 数据库中最新持久化消息数: {len(snapshot.values.get('messages', []))} ---")
                 else:
                     print("--- 当前 thread_id 下无任何状态记录 ---")       
 
             except Exception as stream_e:
-                # 捕获图运行时的内部错误
                 error_data = {
                     "type": "error",
                     "message": str(stream_e),
@@ -226,7 +212,6 @@ async def chat_stream(request: ChatRequest):
                 yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
                 return
 
-            # 输出完整回复标识
             yield f"data: {json.dumps({'type': 'end', 'fullResponse': full_response}, ensure_ascii=False)}\n\n"
           
         return StreamingResponse(
@@ -237,7 +222,6 @@ async def chat_stream(request: ChatRequest):
                 "Connection": "keep-alive",
             }
         )
-        
         
     except Exception as e:
         error_data = {
