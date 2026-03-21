@@ -36,10 +36,9 @@ def create_agent_graph(checkpointer=None):
     
     # 添加内存检查点（用于短期对话记忆）
     if checkpointer is None:
-            from langgraph.checkpoint.memory import MemorySaver
-            checkpointer = MemorySaver()
+        checkpointer = MemorySaver()
         
-        # 3. 编译时必须传入这个 checkpointer
+    # 3. 编译时必须传入这个 checkpointer
     app = workflow.compile(checkpointer=checkpointer)
     return app
 
