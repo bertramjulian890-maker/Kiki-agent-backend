@@ -1,46 +1,43 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+
 from graph.state import AgentState
-from graph.nodes import NODES, should_continue
+from graph.nodes.llm_node import llm_node_func
+from graph.nodes.tool_node import tool_node_func
+from graph.edges.routing import should_continue
 
 def create_agent_graph(checkpointer=None):
     """
-    创建并编译 Agent 图
-    
-    当前流程：
-    START -> call_model -> END
-    
-    后续会扩展为：
-    START -> call_model -> [需要工具?] -> tool_node -> call_model
-                      -> [需要检索?] -> rag_node -> call_model
-                      -> [完成] -> END
+    组装并编译重构后的模块化 LangGraph 工作流
     """
-    # 创建状态图
+    
+    # 实例化基于 AgentState 数据结构的图模型
     workflow = StateGraph(AgentState)
     
-    # 添加节点
-    workflow.add_node("call_model", NODES["call_model"])
+    # 添加功能节点
+    workflow.add_node("llm", llm_node_func)
+    workflow.add_node("tools", tool_node_func)
     
-    # 设置入口点
-    workflow.set_entry_point("call_model")
+    # 设置工作流入口
+    workflow.add_edge(START, "llm")
     
-    # 添加条件边
+    # 挂载条件分发：大模型回答完后决定下一步去哪
     workflow.add_conditional_edges(
-        "call_model",
+        "llm",
         should_continue,
         {
-            "end": END,
-            "continue": "call_model"  # 预留，目前不会用到
+            "tools": "tools",  # 如果有工具调用，跳去工具节点
+            END: END           # 如果没有，直接结束，准备产出
         }
     )
     
-    # 添加内存检查点（用于短期对话记忆）
+    # 工具节点执行完后，必须回流给大模型，让大模型阅读工具产生的结果以进行最终总结
+    workflow.add_edge("tools", "llm")
+    
+    # 为无数据库环境备底
     if checkpointer is None:
         checkpointer = MemorySaver()
         
-    # 3. 编译时必须传入这个 checkpointer
+    # 编译并挂载记忆系统
     app = workflow.compile(checkpointer=checkpointer)
     return app
-
-# 全局图实例
-agent_graph = create_agent_graph()
