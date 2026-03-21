@@ -25,6 +25,7 @@ from graph.builder import create_agent_graph
 load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
+print(f"🛑 检查一下读到的 DB_URL 是: {DB_URL}")
 
 # 先声明为全局变量，等待 FastAPI 启动后再注入灵魂
 pool = None
@@ -63,22 +64,19 @@ async def lifespan(app: FastAPI):
     
     if DB_URL:
         try:
-            # 使用异步连接池
             pool = AsyncConnectionPool(
                 conninfo=DB_URL, 
                 max_size=20, 
                 kwargs={
-                    "autocommit": True,  # 依然必须为 True
+                    "autocommit": True, 
                     "prepare_threshold": None
                 }
             )
-            # 使用异步 Checkpointer
             checkpointer = AsyncPostgresSaver(pool)
             
-            # 异步建表 (如果之前建过会自动跳过)
-            await checkpointer.asetup()
+            # 👈 修正这里：去掉 asetup 的 'a'，改为 setup
+            await checkpointer.setup() 
             
-            # 把异步 Checkpointer 塞进 Graph
             agent_graph = create_agent_graph(checkpointer)
             print("✅ 成功启动：Supabase 全异步持久化模式！")
         except Exception as e:
