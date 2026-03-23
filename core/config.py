@@ -15,6 +15,6 @@ class Settings:
     DATABASE_URL = os.getenv("DATABASE_URL", "")
     
     # 模型配置
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt").lower()
+    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude").lower()
 
 settings = Settings()

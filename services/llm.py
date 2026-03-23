@@ -60,7 +60,7 @@ class LLMService:
             raise ValueError("CLAUDE_BASE_URL not found in environment (中转站地址必填)")
         
         return ChatOpenAI(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-6",
             api_key=api_key,
             base_url=base_url,
             temperature=0.7,
