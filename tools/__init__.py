@@ -4,7 +4,9 @@ from .shell import (
     install_mpv,
     check_mpv_version,
     execute_ncm_command,
-    schedule_ncm_cron
+    schedule_ncm_cron,
+    read_ncm_config,
+    write_ncm_config
 )
 
 # 向外暴露所有供 LLM 调用的工具
@@ -14,5 +16,7 @@ TOOLS = [
     install_mpv,
     check_mpv_version,
     execute_ncm_command,
-    schedule_ncm_cron
+    schedule_ncm_cron,
+    read_ncm_config,
+    write_ncm_config
 ]

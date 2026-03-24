@@ -48,6 +48,51 @@ def check_mpv_version() -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
+import os
+
+ALLOWED_NCM_CONFIG_FILES = {
+    "ncm-preference.json",
+    "ncm-history.json",
+    "ncm-schedule.json"
+}
+
+def get_ncm_config_path() -> str:
+    """获取 ncm 配置文件存放目录"""
+    return os.path.expanduser("~/.config/ncm/")
+
+@tool
+def read_ncm_config(filename: str) -> str:
+    """读取指定的 ncm 状态文件内容。允许的文件名: ncm-preference.json, ncm-history.json, ncm-schedule.json"""
+    if filename not in ALLOWED_NCM_CONFIG_FILES:
+        return f"Error: Access denied. Allowed files are {', '.join(ALLOWED_NCM_CONFIG_FILES)}"
+
+    filepath = os.path.join(get_ncm_config_path(), filename)
+    if not os.path.exists(filepath):
+        return f"File {filename} does not exist yet."
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading file {filename}: {str(e)}"
+
+@tool
+def write_ncm_config(filename: str, content: str) -> str:
+    """覆盖写入内容到指定的 ncm 状态文件。允许的文件名: ncm-preference.json, ncm-history.json, ncm-schedule.json"""
+    if filename not in ALLOWED_NCM_CONFIG_FILES:
+        return f"Error: Access denied. Allowed files are {', '.join(ALLOWED_NCM_CONFIG_FILES)}"
+
+    config_dir = get_ncm_config_path()
+    filepath = os.path.join(config_dir, filename)
+
+    try:
+        os.makedirs(config_dir, exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"File {filename} written successfully."
+    except Exception as e:
+        return f"Error writing file {filename}: {str(e)}"
+
 @tool
 def execute_ncm_command(args: list[str]) -> str:
     """执行 ncm-cli 命令，例如 args 为 ['search', 'song', '--keyword', 'xxx']，代表 ncm-cli search song --keyword xxx"""
