@@ -2,12 +2,14 @@ import subprocess
 import re
 from langchain_core.tools import tool
 
+import shlex
+
 @tool
 def install_ncm_cli() -> str:
-    """执行 npm install -g @music/ncm-cli 来安装网易云音乐 CLI 工具"""
+    """执行 npm install -g @music163/ncm-cli 来安装网易云音乐 CLI 工具"""
     try:
         result = subprocess.run(
-            ["npm", "install", "-g", "@music/ncm-cli"],
+            ["npm", "install", "-g", "@music163/ncm-cli"],
             capture_output=True,
             text=True,
             timeout=120
@@ -74,8 +76,8 @@ def execute_ncm_command(args: list[str]) -> str:
         return f"Error executing ncm-cli: {str(e)}"
 
 @tool
-def schedule_ncm_cron(cron_expression: str, command: str) -> str:
-    """将一条新的定时任务追加到当前系统的 crontab 中。"""
+def schedule_ncm_cron(cron_expression: str, args: list[str]) -> str:
+    """将一条新的定时任务追加到当前系统的 crontab 中。args 为要执行的命令列表，例如 ['ncm-cli', 'search', 'song', '--keyword', 'xxx'] 或 ['/usr/local/bin/node', '/path/to/main.js', '场景']"""
     # 校验 cron_expression，防止通过换行符等注入恶意 cron
     if '\n' in cron_expression or '\r' in cron_expression:
         return "Error: Newlines are not allowed in cron expression."
@@ -83,21 +85,19 @@ def schedule_ncm_cron(cron_expression: str, command: str) -> str:
     if not re.match(r'^[\d\*\/\-\, ]+$', cron_expression):
         return "Error: Invalid cron expression format. Only digits, *, /, -, ,, and literal spaces are allowed."
 
-    # 彻底杜绝 shell 注入：
-    # 限制命令仅能包含字母、数字、中文字符、普通空格、斜杠、短横线、下划线、点号。
-    # 不允许任何能截断或链式执行 shell 的特殊符号（包括 \n 换行符），如 ;, |, &, $, <, >, `, \, ', " 等。
-    if '\n' in command or '\r' in command:
-        return "Error: Newlines are not allowed in cron command."
+    if not args:
+        return "Error: Empty args provided."
 
-    if not re.match(r'^[/a-zA-Z0-9\u4e00-\u9fa5 \-_.]+$', command):
-        return "Error: Invalid characters in cron command. Only alphanumeric, Chinese characters, literal spaces, slashes, hyphens, underscores, and dots are allowed."
-
-    # 额外限制必须以特定安全的前缀开始
-    if not (command.startswith("/usr/local/bin/node ") or command.startswith("ncm-cli ")):
-        return "Error: Unsupported cron command. Only node and ncm-cli are allowed and must match safe prefixes."
+    # 限制执行程序
+    base_cmd = args[0]
+    if base_cmd not in ["ncm-cli", "/usr/local/bin/node"]:
+        return "Error: Unsupported cron command base. Only 'ncm-cli' and '/usr/local/bin/node' are allowed."
 
     try:
-        # 1. 获取当前 crontab
+        # 1. 安全拼接命令
+        command = shlex.join(args)
+
+        # 2. 获取当前 crontab
         result = subprocess.run(
             ["crontab", "-l"],
             capture_output=True,
@@ -105,11 +105,13 @@ def schedule_ncm_cron(cron_expression: str, command: str) -> str:
         )
         # 如果 crontab 不存在，crontab -l 会报错并返回非0退出码，此时 current_cron 应为空
         current_cron = result.stdout if result.returncode == 0 else ""
+        if current_cron and not current_cron.endswith("\n"):
+            current_cron += "\n"
 
-        # 2. 拼装新任务
+        # 3. 拼装新任务
         new_job = f"{cron_expression} {command}\n"
 
-        # 3. 将新的完整 crontab 写入
+        # 4. 将新的完整 crontab 写入
         process = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
         process.communicate(input=current_cron + new_job)
 
