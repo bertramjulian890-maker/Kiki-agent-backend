@@ -165,13 +165,14 @@ def get_ncm_cron() -> str:
         return f"Error reading crontab: {str(e)}"
 
 @tool
-def execute_ncm_command(args: list[str]) -> str:
-    """执行 ncm-cli 命令，例如 args 为 ['search', 'song', '--keyword', 'xxx']，代表 ncm-cli search song --keyword xxx"""
+def execute_ncm_command(command_string: str) -> str:
+    """执行 ncm-cli 命令。你只需要提供具体的参数字符串，例如：'search song --keyword "xxx"'，本工具会自动在前面补齐 'ncm-cli ' 并执行。"""
     try:
-        if not args:
-            return "Error: Empty args provided."
+        if not command_string or not command_string.strip():
+            return "Error: Empty command_string provided."
 
-        cmd = ["ncm-cli"] + args
+        command_args = shlex.split(command_string)
+        cmd = ["ncm-cli"] + command_args
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -192,8 +193,8 @@ def execute_ncm_command(args: list[str]) -> str:
         return f"Error executing ncm-cli: {str(e)}"
 
 @tool
-def schedule_ncm_cron(cron_expression: str, args: list[str]) -> str:
-    """将一条新的定时任务追加到当前系统的 crontab 中。args 为要执行的命令列表，例如 ['ncm-cli', 'search', 'song', '--keyword', 'xxx'] 或 ['/usr/local/bin/node', '/path/to/main.js', '场景']"""
+def schedule_ncm_cron(cron_expression: str, command_string: str) -> str:
+    """将一条新的定时任务追加到当前系统的 crontab 中。command_string 为要执行的完整命令字符串，例如：'ncm-cli search song --keyword "xxx"' 或 '/usr/local/bin/node /path/to/main.js 场景'"""
     # 校验 cron_expression，防止通过换行符等注入恶意 cron
     if '\n' in cron_expression or '\r' in cron_expression:
         return "Error: Newlines are not allowed in cron expression."
@@ -201,22 +202,26 @@ def schedule_ncm_cron(cron_expression: str, args: list[str]) -> str:
     if not re.match(r'^[\d\*\/\-\, ]+$', cron_expression):
         return "Error: Invalid cron expression format. Only digits, *, /, -, ,, and literal spaces are allowed."
 
-    if not args:
-        return "Error: Empty args provided."
+    if not command_string or not command_string.strip():
+        return "Error: Empty command_string provided."
 
-    # 校验 args 中的每一项，防止任何参数中包含换行符导致 crontab 文件格式注入漏洞
-    for arg in args:
+    command_args = shlex.split(command_string)
+    if not command_args:
+        return "Error: Could not parse command_string."
+
+    # 校验 command_args 中的每一项，防止任何参数中包含换行符导致 crontab 文件格式注入漏洞
+    for arg in command_args:
         if '\n' in arg or '\r' in arg:
             return "Error: Newlines are not allowed in cron arguments."
 
     # 限制执行程序
-    base_cmd = args[0]
+    base_cmd = command_args[0]
     if base_cmd not in ["ncm-cli", "/usr/local/bin/node"]:
         return "Error: Unsupported cron command base. Only 'ncm-cli' and '/usr/local/bin/node' are allowed."
 
     try:
         # 1. 安全拼接命令
-        command = shlex.join(args)
+        command = shlex.join(command_args)
 
         # 2. 获取当前 crontab
         result = subprocess.run(
