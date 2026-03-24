@@ -14,7 +14,10 @@ def get_skills_prompt() -> str:
     if _SKILLS_PROMPT_CACHE is not None:
         return _SKILLS_PROMPT_CACHE
 
-    skills_dir = "skills"
+    # 基于当前文件路径计算出项目根目录下的 skills/ 目录路径
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    skills_dir = os.path.join(base_dir, "skills")
+
     prompt = ""
     if os.path.exists(skills_dir):
         for filename in os.listdir(skills_dir):

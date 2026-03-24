@@ -93,6 +93,77 @@ def write_ncm_config(filename: str, content: str) -> str:
     except Exception as e:
         return f"Error writing file {filename}: {str(e)}"
 
+import threading
+
+@tool
+def get_ncm_login_qrcode() -> str:
+    """获取网易云音乐登录的二维码链接。直接调用该工具，它会自动在后台启动 ncm-cli 扫码登录流程并轮询，并将生成的 qrcode 链接返回给你。请将该链接直接发送给用户，让用户在浏览器打开或者扫码。"""
+    try:
+        # 强制使用无控制字符的输出，避免 readline 解析失败
+        import os
+        env = os.environ.copy()
+        env["FORCE_COLOR"] = "0"
+
+        # 不要使用 communicate，因为我们需要进程在后台一直跑着等用户扫码
+        # 改用 readline 配合 timeout
+        process = subprocess.Popen(
+            ["ncm-cli", "login"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1  # line buffered
+        )
+
+        login_url = ""
+        import time
+        start_time = time.time()
+
+        # 只等待 10 秒钟抓取 URL
+        while time.time() - start_time < 10:
+            # 使用非阻塞的方式读取或者直接 readline (因为 bufsize=1)
+            line = process.stdout.readline()
+            if not line:
+                break
+
+            match = re.search(r'(https?://music\.163\.com[^\s\x1b]+)', line)
+            if match:
+                login_url = match.group(1)
+                break
+
+        if not login_url:
+            process.kill()
+            return "Failed to extract login QR code URL within 10 seconds. Network might be unreachable."
+
+        # 如果拿到了 URL，启动一个后台线程继续读取它的输出以防止管道塞满死锁，
+        # 并让 process 继续活在后台等待扫码成功
+        def drain_output(p):
+            try:
+                while p.poll() is None:
+                    p.stdout.readline()
+            except:
+                pass
+
+        t = threading.Thread(target=drain_output, args=(process,), daemon=True)
+        t.start()
+
+        return f"Successfully retrieved login URL. Background polling process is running. Please ask the user to scan or open this link immediately: {login_url}"
+    except Exception as e:
+        return f"Error retrieving login QR code: {str(e)}"
+
+@tool
+def get_ncm_cron() -> str:
+    """获取当前系统中的 crontab 列表，用于检查是否已经有重复任务或管理调度。"""
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True
+        )
+        return result.stdout.strip() if result.returncode == 0 else "No crontab for current user."
+    except Exception as e:
+        return f"Error reading crontab: {str(e)}"
+
 @tool
 def execute_ncm_command(args: list[str]) -> str:
     """执行 ncm-cli 命令，例如 args 为 ['search', 'song', '--keyword', 'xxx']，代表 ncm-cli search song --keyword xxx"""
@@ -132,6 +203,11 @@ def schedule_ncm_cron(cron_expression: str, args: list[str]) -> str:
 
     if not args:
         return "Error: Empty args provided."
+
+    # 校验 args 中的每一项，防止任何参数中包含换行符导致 crontab 文件格式注入漏洞
+    for arg in args:
+        if '\n' in arg or '\r' in arg:
+            return "Error: Newlines are not allowed in cron arguments."
 
     # 限制执行程序
     base_cmd = args[0]
