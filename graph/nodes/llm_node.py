@@ -6,14 +6,12 @@ from graph.state import AgentState
 from services.llm import llm_service
 from tools import TOOLS
 
+import asyncio
+
 _SKILLS_PROMPT_CACHE = None
 
-def get_skills_prompt() -> str:
-    """动态读取 skills 目录下的所有技能文档并拼接成 prompt，使用缓存避免频繁读盘"""
-    global _SKILLS_PROMPT_CACHE
-    if _SKILLS_PROMPT_CACHE is not None:
-        return _SKILLS_PROMPT_CACHE
-
+def _read_skills_sync() -> str:
+    """在单独的线程中执行同步文件读写操作，避免阻塞 Event Loop"""
     # 基于当前文件路径计算出项目根目录下的 skills/ 目录路径
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     skills_dir = os.path.join(base_dir, "skills")
@@ -29,7 +27,16 @@ def get_skills_prompt() -> str:
                         prompt += f"\n\n--- Skill: {filename} ---\n{content}\n"
                 except Exception as e:
                     print(f"Error reading skill file {filename}: {e}")
+    return prompt
 
+async def get_skills_prompt() -> str:
+    """动态读取 skills 目录下的所有技能文档并拼接成 prompt，使用异步避免阻塞"""
+    global _SKILLS_PROMPT_CACHE
+    if _SKILLS_PROMPT_CACHE is not None:
+        return _SKILLS_PROMPT_CACHE
+
+    # 使用 to_thread 将文件 I/O 卸载到其他线程
+    prompt = await asyncio.to_thread(_read_skills_sync)
     _SKILLS_PROMPT_CACHE = prompt
     return prompt
 
@@ -50,7 +57,7 @@ async def llm_node_func(state: AgentState, config: RunnableConfig) -> Dict[str, 
     
     # 注入系统提示词
     # 动态加载所有 skills
-    skills_prompt = get_skills_prompt()
+    skills_prompt = await get_skills_prompt()
     system_prompt = BASE_SYSTEM_PROMPT
     if skills_prompt:
         system_prompt += "\n\n你具备以下网易云音乐相关技能，可以使用 shell 命令执行相应的操作：\n" + skills_prompt
